@@ -1,0 +1,386 @@
+//Auteur : Aude le Gluher, aude.le-gluher@loria.fr
+//Document destiné aux relecteurs du rapport de stage de Aude Le Gluher
+//Algorithme protoype de calcul d'espaces de Riemann-Roch avec représentations polynomiales de diviseurs
+
+//AVIS : on suppose que les représentations polynomiales des diviseurs consideres sont propres au sens ou on a deja trouve une direction de projection qui fait qu'on n'a jamais deux points differents qui se projettent au meme endroit.
+
+
+//Entree = un anneau de polynomes R a coeff dans un corps fini (pour que Random ait du sens), un entier k
+//Sortie = un polynome de R de degre k
+function RandomPolynomialOfDegree(ring, degree)
+    K := BaseRing(ring);
+    return &+[Random(K)*m : m in MonomialsOfDegree(ring,degree)];
+end function;
+
+//Entree = un ideal I d'un anneau de polynomes R a coeff dans un corps fini (puisqu'on y utilise RandomPolynomialOfDegree), un entier k
+//Sortie = un polynome qui est dans I et de degre k 
+function RandomPolynomialInIdealOfDegree(ideal, degree)
+    gens:=Generators(ideal);
+    ring:=Parent(Random(gens)); 
+    K:=BaseRing(ring);
+    return &+[RandomPolynomialOfDegree(ring,degree-Degree(g))*g : g in gens | Degree(g) le degree];
+end function;
+
+//Entree = une liste non vide LI d'ideaux d'un anneau de polynomes
+//L'ideal produit des ideaux de LI, le tout sature (une etape de saturation a chaque produit)
+function produit(LI)
+    n := #LI;
+    res := LI[1];
+	for i in [2..n]  do
+	res := Saturation(res*LI[i]);
+    end for;
+    return res;       
+end function;
+
+
+
+K := GF(1009);
+R<x,y,z> := PolynomialRing(K,3);
+
+
+//Convertit un ideal d'un anneau de polynome a trois indeterminees en deux polynomes univaries : le premier de la forme f(y) et le deuxieme de la forme  g(y) (a la place de x-g(y) comme ca on n'a que des polynomes univaries)
+function FromIdealToPolynomials(I)
+    R := Parent(Random(Generators(I)));
+    K := BaseRing(R);
+    r := PolynomialRing(K);
+    if I eq Ideal([R!1]) then //cas ou l'ideal c'est tout
+	return <r!1,r!0>;
+    else
+	J := Ideal(Append(Generators(I), R.3 -1));	
+	G := GroebnerBasis(J);
+	phi := hom<R->r|0,r.1,0>;
+	return <phi(G[2]),phi(-G[1]+R.1)>;
+    end if;
+end function;
+
+    
+
+
+//Operation inverse : convertit un couple de polynomes univaries en l'idéal associé (dans un anneau de polynomes a trois indeterminees)
+function FromPolynomialsToIdeal(P)
+    f,g := Explode(P);
+    K := BaseRing(f); //on recupere le corps sur lequel sont f et g
+    R<X,Y,Z> := PolynomialRing(K,3); //on construit le nouvel anneau de polynomes
+    F := Evaluate(f,Y/Z)*Z^Degree(f);
+    gx := X - Evaluate(g,Y);
+    G := Evaluate(gx,[X/Z,Y/Z,1])*Z^Degree(gx);
+    R!F;
+    R!G;
+    return Saturation(ideal<R|F,G>,ideal<R|Z>);
+end function;
+
+
+//Entree = un anneau de polynomes a trois indeterminees sur un corps K, un ideal I de polynomes a trois indeterimees aussi sur le meme corps K (mais les indeterminees dans R et I peuvent avoir des noms differents
+//Sortie = l'ideal I mais dont on a modifie les indeterminees de facon a en faire un ideal de R
+function Rename(R,I)
+    L := [];
+    for f in Generators(I) do
+	L cat:= [R!Evaluate(f, [R.1,R.2,R.3])];
+    end for;
+    return ideal<R|L>;	 
+end function;
+
+
+eq_curve:=RandomPolynomialOfDegree(R,Random([5..15]));
+PP:=ProjectiveSpace(K,2);
+C:= Curve(PP,eq_curve);
+Places1:={RandomPlace(C, 3) : i in [1..20]};
+Places2:={RandomPlace(C, 3) : i in [1..20]};
+
+I := produit([Ideal([R!g : g in Generators(Ideal(pl))])+Ideal(eq_curve) : pl in Places1]);
+J := produit([Ideal([R!g : g in Generators(Ideal(pl))])+Ideal(eq_curve) : pl in Places2]);
+
+//Faire les operations ideal I -> polynomes -> ideal J donne bien I = J !
+I_p := Rename(R,FromPolynomialsToIdeal(FromIdealToPolynomials(I)));
+I_p eq I;
+
+P1 := FromIdealToPolynomials(I);
+P2 := FromIdealToPolynomials(J);
+
+
+
+
+//Etant donne deux diviseurs dans leur representation polynomiale, renvoie la representation polynomiale de ce qui correspond a la somme des deux diviseurs
+function Union(P1,P2)
+    f1,g1 := Explode(P1);
+    f2,g2 := Explode(P2);
+    Simplef1 := f1 div Gcd(f1, Derivative(f1));
+    Simplef2 := f2 div Gcd(f2, Derivative(f2));
+    P := Gcd(Simplef1,Simplef2);
+    F1 := Simplef1 div P;
+    F2 := Simplef2 div P;
+    return < f1*f2,CRT([g1,g2,g1],[F1,F2,P])>;	
+end function;
+
+//Normalement, union correspond a la somme de diviseurs donc au produit d'ideaux. On veut donc verifier que I*J (une fois sature) est le meme ideal que FromPolynomialsToIdeal(Union(FromIdealToPolynomials(I), FromIdealToPolynomials(J)))
+
+Rename(R,FromPolynomialsToIdeal(Union(P1,P2))) eq Saturation(I*J);
+
+//Etant donne deux diviseurs D et D' dans leur representation polynomiale, renvoie la representation polynomiale de ce qui correspond au diviseur faisant intervenir les points dans l'intersection des supports de D et D'
+function Intersection(P1,P2)
+    f1,g1 := Explode(P1);
+    f2,g2 := Explode(P2);
+    f := Gcd(f1,f2);
+    return <f, g1 mod f>;
+end function;
+
+Rename(R,FromPolynomialsToIdeal(Intersection(P1,P2))) eq Saturation(I+J);
+
+
+//Etant donne deux diviseurs D et D' dans leur representation polynomiale, renvoie la representation polynomiale de ce qui correspond au ColonIdeal(ideal associe a D:ideal associe a D')
+function Diff(P1,P2)
+    f1,g1 := Explode(P1);
+    f2,g2 := Explode(P2);
+    f := f1 div Gcd(f1,f2);
+    return <f, g1 mod f>;
+end function;
+
+Rename(R,FromPolynomialsToIdeal(Diff(P1,P2))) eq Saturation(ColonIdeal(I,J));
+
+
+//Entree = deux couples de polynomes (ne représentant pas le meme diviseur)
+//Sortie = oui ssi la situation "un point represente par P1 et un point represente par P2 sont differents et ont la meme projection sur les y" n'arrive jamais
+function NoBadProjection(P1,P2)
+    f1,g1 := Explode(P1);
+    f2,g2 := Explode(P2);
+    P := Gcd(f1,f2);
+    return (g1 mod P) eq (g2 mod P);
+end function;
+
+
+
+
+
+
+
+//d = le d du Y^d de la courbe qu'on considere, f = polynome
+//Renvoie le degre minimal qu'il faut pour avoir une solution de notre systeme lineaire
+function ProperDegree(d,f)
+    if Binomial(d+1, 2) le Degree(f) then
+	return Floor(Degree(f)/d -(3-d)/2 +1);
+    else
+	return Floor( (-3 + Sqrt(1 + 8*Degree(f)))/2 + 1);
+    end if;
+end function;
+
+
+
+//Entree = un couple de polynomes (correspondant a un ideal I associe a un certain diviseur) et un entier d tel que la courbe dont on est en train de considere un diviseur s'ecrit en affine Y^d + des choses
+//Sortie : un polynome en deux variables de I
+function RandomInIdeal(P,d)
+    f,g := Explode(P);
+    R := Parent(f);
+    K := BaseRing(f);
+    Z := Integers();
+    D := ProperDegree(d,f);
+    if D ge d then
+	nbAlpha := Z!(d*(D+(3-d)/2));
+    else
+	nbAlpha := Binomial(D + 2, 2);
+    end if;
+    RAlpha := PolynomialRing(K,nbAlpha);
+    A2<X,Y> := PolynomialRing(RAlpha,2);
+    Monomials := [X^i*Y^j : i in [0..D-j], j in [0..d-1]];
+    assert(nbAlpha eq #Monomials);
+    H := &+[RAlpha.i*Monomials[i] : i in [1..#Monomials]];
+    A1 := PolynomialRing(RAlpha);
+    HEval := Evaluate(H,[g,A1.1]) mod f;
+    Mat := ChangeRing(JacobianMatrix(Coefficients(HEval)),K);
+    Sol := Basis(Kernel(Transpose(Mat)))[1];
+    c, m := CoefficientsAndMonomials(H);
+    assert(nbAlpha eq #c);
+    r := PolynomialRing(K,2);
+    Pol :=  &+[Evaluate(c[i],Eltseq(Sol))*m[i] : i in [1..#c]];
+    return r!Pol;
+end function;
+
+res := RandomInIdeal(P1,4);
+
+Parent(res);
+
+res;
+
+rrr<t> := PolynomialRing(K);
+
+
+f,g := Explode(P1);
+Evaluate(res,[g,t]) mod f;
+
+
+
+
+
+
+//Entree = une representation polynomiale P de l'idéal I et un entier d (correspondant au Y^d de la courbe) et un polynome G
+//Sortie = le cardinal d'une base de l'ev des polynomes dans I, de degre plus petit que deg(G) et qui ne sont pas multiples de la courbe donnee par l'equation Y^d + trucs
+function BaseCardinal(P,d,G)
+f,g := Explode(P);
+    R := Parent(f);
+    K := BaseRing(f);
+    Z := Integers();
+    D := Degree(G);
+    if D ge d then
+	nbAlpha := Z!(d*(D+(3-d)/2));
+    else
+	nbAlpha := Binomial(D + 2, 2);
+    end if;
+    RAlpha := PolynomialRing(K,nbAlpha);
+    A2<X,Y> := PolynomialRing(RAlpha,2);
+    Monomials := [X^i*Y^j : i in [0..D-j], j in [0..d-1]];
+    assert(nbAlpha eq #Monomials);
+    H := &+[RAlpha.i*Monomials[i] : i in [1..#Monomials]];
+    A1 := PolynomialRing(RAlpha);
+    HEval := Evaluate(H,[g,A1.1]) mod f;
+    Mat := ChangeRing(JacobianMatrix(Coefficients(HEval)),K);
+    return Dimension((Kernel(Transpose(Mat))));
+end function;
+
+BaseCardinal(P1,4);
+
+
+//Entree = un polynome en deux variables dans K[x,y]
+//Sortie = le meme polynome qu'en entree mais considere dans K(x)[y]
+function CoeffInField(P)
+    R := Parent(P);
+    K := BaseRing(R);
+    RR := PolynomialRing(FunctionField(K));
+    phi := hom<R->RR|RR.1,FunctionField(K).1>;
+    return RR!phi(P);
+end function;
+
+rr<x,y> := PolynomialRing(K,2);
+P := x*y+6*x^3;
+CoeffInField(P);
+
+
+//Entree = deux polynomes en deux variables
+//Sortie = la representation polynomiale de <P>+<Q>
+function ResAndSubRes(P,Q)
+    if (Degree(P) gt Degree(Q)) then
+        A := P;
+        B := Q;
+        coeff := 1;
+    else
+        A := Q;
+        B := P;
+        coeff := 1;
+    end if;
+    while (Degree(B) ne 0) do
+        R := A mod B;
+        coeff := coeff*(-1)^(Degree(A)*Degree(B))* LeadingCoefficient(B)^(Degree(A)-Degree(R));
+        A := B;
+        B := R;
+    end while;
+    assert (Degree(A) eq 1);
+    res := coeff*B^Degree(A);
+    a,b,inv := Xgcd(res,Coefficients(A)[2]);
+    subres := A*inv;
+    R := Parent(res); //on remet le resultat sous forme de polynomes univaries
+    K := BaseRing(BaseRing(R));
+    r := PolynomialRing(K);
+    print(Parent(r!res));
+    denom := Denominator(FunctionField(K)!(R.1-subres));
+    _,_,inv := Xgcd(r!res,r!denom);
+//    print r!res,r!denom,inv;
+//    print Numerator(FunctionField(K)!(R.1-subres))*inv;
+    return <r!res,Numerator(FunctionField(K)!(R.1-subres))*inv>;
+end function;
+
+K := GF(65521);
+R1<Y> := FunctionField(K);
+R2<X> := PolynomialRing(R1);
+
+f := &+[Random(K)*X^i*Y^j : j in [0..3-i], i in [0..3]];
+g := &+[Random(K)*X^i*Y^j : j in [0..3-i], i in [0..3]];
+
+ResAndSubRes(f,g);
+
+Resultant(f,g);
+
+
+
+
+//Renvoie un polynome de R de degre inferieur a deg
+function RandomPol(R,deg)
+    K := BaseRing(R);
+    return &+[Random(K)*m : m in MonomialsOfDegree(R,degree), degree in [1..deg]];
+end function;
+
+
+K := GF(1009);
+R<x,y> := PolynomialRing(K,2);
+M<t> := PolynomialRing(K);
+P := CoeffInField(RandomPol(R,Random([2..10])));
+Q := CoeffInField(RandomPol(R,Random([2..10])));
+ResAndSubRes(P,Q);
+Resultant(P,Q);
+
+
+
+//Entree = l'equation d'une courbe, deux diviseurs effectifs D_+ et D_- donnes par leur representation polynomiale, un entier d tq eq_curve = Y^d + trucs.
+//Sortie = la dimension de l'ERR associe au diviseur D_+ - D_-
+function DimRRpol(eq_curve, P_plus, P_minus,d)
+    G := RandomInIdeal(P_plus,d);   
+    P_res := Union(Diff(ResAndSubRes(CoeffInField(eq_curve),CoeffInField(G)),P_plus),P_minus);
+    return BaseCardinal(P_res,d,G);
+end function;
+
+
+
+//Entree = un polynome de K[x,y,z] correspondant à l'equation d'une courbe
+//Sortie = Dans cet ordre : l'équation de la courbe deshomogeneisee et son degré en y (donc normalement le d du y^d le plus gros qui intervient)
+function FindDegree(eq_curve)
+    R := Parent(eq_curve);
+    K := BaseRing(R);
+    R2 := PolynomialRing(K,2);
+    Rf := PolynomialRing(FunctionField(K));
+    phi := hom<R->R2|R2.1,R2.2,1>;
+    phiField := hom<R->Rf|FunctionField(K).1,Rf.1,1>;
+    return <phi(eq_curve), Degree(phiField(eq_curve))>;
+end function;
+
+FindDegree(RandomPolynomialOfDegree(R,18))[2];
+
+
+//Cas ou on a un diviseur effectif
+
+K := GF(1009);
+R<x,y,z> := PolynomialRing(K,3);
+eq_curve:=RandomPolynomialOfDegree(R,Random([5..15]));
+PP:=ProjectiveSpace(K,2);
+C:= Curve(PP,eq_curve);
+Places :={RandomPlace(C, 3) : i in [1..30]};
+Div := Divisor([<pl,1> : pl in Places]);
+I := produit([Ideal([R!g : g in Generators(Ideal(pl))])+Ideal(eq_curve) : pl in Places]);
+time Dimension(Div);
+equation,d := Explode(FindDegree(eq_curve));
+P_plus := FromIdealToPolynomials(I);
+pr := Parent(P_plus[1]);
+P_minus := <pr!1,pr!0>;
+time DimRRpol(equation,P_plus,P_minus,d);
+
+
+
+
+//Cas general
+
+K := GF(1009);
+R<x,y,z> := PolynomialRing(K,3);
+eq_curve:=RandomPolynomialOfDegree(R,Random([5..15]));
+PP:=ProjectiveSpace(K,2);
+C:= Curve(PP,eq_curve);
+Places1 :={RandomPlace(C, 3) : i in [1..5]};
+Places2 :={RandomPlace(C, 3) : i in [1..2]};
+Div := Divisor([<pl,1> : pl in Places1])-Divisor([<pl,1> : pl in Places2]);
+I := produit([Ideal([R!g : g in Generators(Ideal(pl))])+Ideal(eq_curve) : pl in Places1]);
+J := produit([Ideal([R!g : g in Generators(Ideal(pl))])+Ideal(eq_curve) : pl in Places2]);
+time Dimension(Div);
+equation,d := Explode(FindDegree(eq_curve));
+P_plus := FromIdealToPolynomials(I);
+P_minus := FromIdealToPolynomials(J);
+DimRRpol(equation,P_plus,P_minus,d);
+
+
+
+
+

@@ -1,0 +1,274 @@
+//Auteur : Aude Le Gluher, aude.le-gluher@loria.fr
+//Document destiné aux relecteurs du rapport de stage de Aude Le Gluher.
+//Algorithme prototype de calcul d'espaces de Riemann-Roch avec le vocabulaire des idéaux.
+
+
+
+//Entree = un anneau de polynomes R a coeff dans un corps fini (pour que Random ait du sens), un entier k
+//Sortie = un polynome de R de degre k
+function RandomPolynomialOfDegree(ring, degree)
+    K := BaseRing(ring);
+    return &+[Random(K)*m : m in MonomialsOfDegree(ring,degree)];
+end function;
+
+//Entree = un ideal I d'un anneau de polynomes R a coeff dans un corps fini (puisqu'on y utilise RandomPolynomialOfDegree), un entier k
+//Sortie = un polynome qui est dans I et de degre k 
+function RandomPolynomialInIdealOfDegree(ideal, degree)
+    gens:=Generators(ideal);
+    ring:=Parent(Random(gens)); 
+    K:=BaseRing(ring);
+    return &+[RandomPolynomialOfDegree(ring,degree-Degree(g))*g : g in gens | Degree(g) le degree];
+end function;
+
+//Entree = un ensemble de polynomes G (destine a etre une base de Groebner de I_pos) et un polynome m
+//Sortie = un element d'une base de I_pos_d   
+function Grobnisation(G,m)
+    for g in G do
+	if IsDivisibleBy(m,LeadingMonomial(g)) then
+	    res := g*(m div LeadingMonomial(g));
+	    break;
+	end if;
+    end for;
+    return res;
+end function;
+
+//Entree = une liste non vide LI d'ideaux d'un anneau de polynomes
+//L'ideal produit des ideaux de LI, le tout sature (une etape de saturation a chaque produit)
+function produit(LI)
+    n := #LI;
+    res := LI[1];
+	for i in [2..n]  do
+	res := Saturation(res*LI[i]);
+    end for;
+    return res;       
+end function;
+
+//Puissance k-eme d'un ideal. Fonction inutile puisqu'en fait I^k marche aussi bien
+function puissance(I,k)
+    res := I;
+        for i in [2..k] do
+	    res := Saturation(res*I);
+	end for;
+	return res;
+end function;
+
+
+//A revoir
+function IsSmooth(eq_curve)
+    R := Parent(eq_curve);
+    d, _ := Dimension(Saturation(ideal<R | Derivative(eq_curve,R.1), Derivative(eq_curve,R.2), Derivative(eq_curve,R.3)>));
+    return (d eq 1);
+end function;
+
+
+
+//On se place dans le cas ou la courbe est lisse (pas de singularités) 
+//Il faudrait verifier que la courbe en entree est bien lisse, que c'est une courbe, que les points sont dessus. On fait ici confiance a l'utilisateur pour que sa demande soit bien formée.
+//Entree  = Un ideal I_c (correspondant a une courbe lisse), un ideal I_plus (correspondant a un diviseur), un ideal I_moins (correspondant a un diviseur), un parametre entier deg.
+//Sortie = le couple (base de l'ERR associe au diviseur represente par I_plus et I_moins, dimension de cet ERR)
+function DimEtBaseRR_lisse(I_c, I_plus, I_moins, deg)
+    R := Parent(Random(Generators(I_c)));
+    G_hasard := RandomPolynomialInIdealOfDegree(I_plus,deg);
+    assert G_hasard notin I_c; //C'est en fait la seule condition qu'il faut et elle se traduit artificiellement par une condition sur deg
+    I_res := Saturation(ColonIdeal((I_c + Ideal(G_hasard))*I_moins, I_plus));
+    G := GroebnerBasis(I_res);
+    B := {Grobnisation(G,m)/G_hasard : m in MonomialsOfDegree(R,deg) | m in LeadingMonomialIdeal(I_res) and m notin LeadingMonomialIdeal(I_c)};
+    return <#B,B>;
+end function;
+
+
+
+
+
+//CAS OU LES DIVISEURS NE CONCERNENT QUE DES POLES SIMPLES
+
+//Entree = un entier n correspondant au nombre d'essais, un entier d correspondant au degré commun de toutes les places qui vont former notre diviseur D^+, un corps K et un anneau de polynomes R sur K
+//On va faire n fois les opérations suivantes : Choisir un polynome (donc une courbe) dans R de degre entre 10 et 20. Choisir 40 places sur cette courbe de degré d. Construire le diviseur regroupant ces places Div en allouant la multiplicite 1 a chaque place et l'ideal correspondant I_pos. Comparer les temps de calcul de Dimension et de notre algo pour l'ERR associé à ce diviseur.
+procedure SimplePolesOnly(n,d,K,R)
+    for i:= 1 to n do
+	eq_curve := RandomPolynomialOfDegree(R, Random([10..20]));
+	C := Curve(ProjectiveSpace(K,2),eq_curve);
+	Places := {RandomPlace(C,d) : j in [1..40]};
+	Div := Divisor([<pl,1> : pl in Places]);
+	I_pos :=produit([Ideal([R!g : g in Generators(Ideal(pl))])+Ideal(eq_curve) : pl in Places]);
+	print "essai", i;
+	print "avec dimension :";
+	time Dimension(Div);
+	print "avec notre super algo :";
+	time DimEtBaseRR_lisse(Ideal([eq_curve]), I_pos,  Ideal([R!1]), 30)[1];
+	print "\n";   
+    end for;
+end procedure;
+
+
+K:=GF(65521);
+R<x,y,z>:=PolynomialRing(K,3,"grevlex");
+
+//50 essais
+SimplePolesOnly(50,3,K,R);
+
+//Resultats : sur 200 tests avec des degres de places egaux a 3,notre algo est systematiquement plus rapide que Dimension, a l'exception de 7 fois ou Dimension a répondu en temps 0, ce qui est surement du au fait que les calculs compliques demandes a ces occasions ont du etre faits lors d'une iteration precedente.
+
+//50 essais mais avec des degres 1
+SimplePolesOnly(30,1,K,R);
+
+//Quand les degres des places sont egaux a 1, notre algo n'est plus systematiquement plus rapide. Sur 50 essais (sans compter les fois ou Dimension s'execute en temps 0), Dimension est plus rapide 5 fois. Bizarrement, dans chacun de ces cas, la dimension de l'ERR calculee etait de 1. Est-ce toujours le cas ?
+
+
+
+
+
+
+//CAS OU LES DIVISEURS NE CONCERNENT QUE DES POLES, SIMPLES OU PAS
+
+//Memes entrees que SimplePolesOnly sauf qu'on rajoute o = la multiplicite commune de toutes les places dans le diviseur dont on calcule l'ERR
+procedure PolesOnly(n,d,o,K,R)
+    for i:= 1 to n do
+	eq_curve := RandomPolynomialOfDegree(R, Random([10..20]));
+	C := Curve(ProjectiveSpace(K,2),eq_curve);
+	Places := {RandomPlace(C,d) : j in [1..20]};
+	Div := Divisor([<pl,o> : pl in Places]);
+	I_pos :=produit([(Ideal([R!g : g in Generators(Ideal(pl))])+Ideal(eq_curve))^o : pl in Places]);
+	print "essai", i;
+	print "avec dimension :";
+	time Dimension(Div);
+	print "avec notre super algo :";
+	time DimEtBaseRR_lisse(Ideal([eq_curve]), I_pos,  Ideal([R!1]), 30)[1];
+	print "\n";   
+    end for;
+end procedure;
+
+
+K:=GF(65521);
+R<x,y,z>:=PolynomialRing(K,3,"grevlex");
+
+//Avec des places de degre 3 et de multiplicite 2
+PolesOnly(50,3,2,K,R);
+
+//Avec des places de degre 1 et de multiplicite 2
+PolesOnly(50,1,2,K,R);
+
+//Dans les deux cas (degres des places 1 ou 3), Dimension est plus rapide. Notre algo a des temps de calcul similaires a ceux quand il n'y a que des multiplicites 1 mais Dimension lui devient bien plus rapide (facteur 10 environ). Comment cela se fait-il ?
+
+//Remarque : dans le cas ou les places sont de degre 1, le temps de calcul de (Places, Div, I_pos) peut prendre 10 minutes alors que c'est rapide quand les places sont de degré 3. Explication ?
+
+
+
+
+
+
+
+//CAS OU LES DIVISEURS SONT SIMPLES (MULTIPLICITES 1) MAIS PLUS EFFECTIFS
+
+//Memes entrees que SimplePolesOnly sauf que cette fois notre diviseur sera constitue d'une partie positive comprenant 30 places et d'une partie negative en comprenant 2, les deux avec que des multiplicites egales a 1
+procedure SimpleDivisors(n,d,K,R)
+    for i:= 1 to n do
+	eq_curve := RandomPolynomialOfDegree(R, Random([10..20]));
+	C := Curve(ProjectiveSpace(K,2),eq_curve);
+	Pos := {RandomPlace(C,d) : j in [1..30]};
+	Neg := {RandomPlace(C,d) : j in [1..2]};
+	Div := Divisor([<pl,1> : pl in Pos]) - Divisor([<pl,1> : pl in Neg]);
+	I_pos :=produit([Ideal([R!g : g in Generators(Ideal(pl))])+Ideal(eq_curve) : pl in Pos]);
+	I_neg :=produit([Ideal([R!g : g in Generators(Ideal(pl))])+Ideal(eq_curve) : pl in Neg]);
+	print "essai", i;
+	print "avec dimension :";
+	time Dimension(Div);
+	print "avec notre super algo :";
+	time DimEtBaseRR_lisse(Ideal([eq_curve]), I_pos,  I_neg, 30)[1];
+	print "\n";   
+    end for;
+end procedure;
+
+
+K:=GF(65521);
+R<x,y,z>:=PolynomialRing(K,3,"grevlex");
+
+//Diviseurs non effectifs, avec multiplicites 1 et places de degre 3
+SimpleDivisors(50,3,K,R);
+
+//Notre algo est presque toujours plus rapide.
+//La encore, quand les places sont prises de degre 1, le calcul des diviseurs et ideaux est tres long. Toujours pas d'explication
+
+
+
+
+
+
+
+
+//CAS OU POLES ET ZEROS PEUVENT AVOIR DES MULTIPLICITES
+
+//Entree = un entier n correspondant au nombre d'essais ; un entier d correspondant au degre commun a toutes les places qui vont constituer nos diviseurs ; un entier mp (resp mn) destine a etre la multiplicite commune de toutes les places dans la partie positive (resp negative) du diviseur, un corp K, un anneau de polynome R sur K
+//On fait n fois : choisir une courbe dans R de degre entre 10 et 20 / choisir 30 places-poles et 2 places-zeros / construire le diviseur pour lequel tous les poles ont mult mn et les zeros mult mp puis les ideaux associes. Comparer les temps de calcul de Dimension et de notre algo.
+procedure AnyDivisor(n,d,mp,mn,K,R)
+    for i:= 1 to n do
+	eq_curve := RandomPolynomialOfDegree(R, Random([10..20]));
+	C := Curve(ProjectiveSpace(K,2),eq_curve);
+	Pos := {RandomPlace(C,d) : j in [1..30]};
+	Neg := {RandomPlace(C,d) : j in [1..2]};
+	Div := Divisor([<pl,mp> : pl in Pos]) - Divisor([<pl,mn> : pl in Neg]);
+	I_pos :=produit([(Ideal([R!g : g in Generators(Ideal(pl))])+Ideal(eq_curve))^mp : pl in Pos]);
+	I_neg :=produit([(Ideal([R!g : g in Generators(Ideal(pl))])+Ideal(eq_curve))^mn : pl in Neg]);
+	print "essai", i;
+	print "avec dimension :";
+	time Dimension(Div);
+	print "avec notre super algo :";
+	time DimEtBaseRR_lisse(Ideal([eq_curve]), I_pos,  I_neg, 30)[1];
+	print "\n";   
+    end for;
+end procedure;
+
+
+K:=GF(65521);
+R<x,y,z>:=PolynomialRing(K,3,"grevlex");
+
+
+AnyDivisor(50,3,2,2,K,R);
+
+//Notre algo est quasi systematiquement plus rapide
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+K:=GF(65521);
+R<x,y,z>:=PolynomialRing(K,3,"grevlex");
+
+
+eq_curve:=RandomPolynomialOfDegree(R,Random([5..15]));
+PP:=ProjectiveSpace(K,2);
+C:= Curve(PP,eq_curve);
+
+Zeros1:={RandomPlace(C, 3) : i in [1..10]};
+Zeros2 := {RandomPlace(C, 2) : i in [1..10]};
+Poles:={RandomPlace(C, 3) : i in [1..10]};
+
+divisor:=Divisor([<pl,1> : pl in Zeros1 ]) + Divisor([<pl,2> : pl in Zeros2 ]) - Divisor([<pl,1> : pl in Poles]);
+
+I_plus1 := produit([(Ideal([R!g : g in Generators(Ideal(pl))])+Ideal(eq_curve)) : pl in Zeros1]);
+I_plus2 := produit([(Ideal([R!g : g in Generators(Ideal(pl))])+Ideal(eq_curve))^2 : pl in Zeros2]);
+I_plus := I_plus1*I_plus2;
+I_moins :=produit([Ideal([R!g : g in Generators(Ideal(pl))])+Ideal(eq_curve) : pl in Poles]);
+
+time (DimEtBaseRR_lisse(Ideal([eq_curve]), I_plus,I_moins, 30))[1];
+
+time Dimension(divisor);
